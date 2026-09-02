@@ -271,6 +271,11 @@ let codegen_actions printer (g : EventGraph.event_graph) =
         | PutShared _ -> ()
         | ImmediateRecv _ -> ()
         | ImmediateSend _ -> ()
+        | Assertion (s, td) ->
+          let w = Option.get td.w in 
+          Printf.sprintf "%s: assert (%s);"
+            (CodegenFormat.sanitize_identifier s)
+            (CodegenFormat.format_wirename w.thread_id w.id) |> print_line
       in
       List.iter print_action e.actions;
       print_line ~lvl_delta_pre:(-1) "end"
