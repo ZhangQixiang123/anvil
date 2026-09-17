@@ -268,11 +268,7 @@ let codegen_actions printer (g : EventGraph.event_graph) =
         | PutShared _ -> ()
         | ImmediateRecv _ -> ()
         | ImmediateSend _ -> ()
-        | Assertion (s, td) ->
-          let w = Option.get td.w in 
-          Printf.sprintf "%s: assert (%s);"
-            (CodegenFormat.sanitize_identifier s)
-            (CodegenFormat.format_wirename w.thread_id w.id) |> print_line
+        | Assertion _ -> () (* printed as a module item by codegen_assert_properties *)
       in
       List.iter print_action e.actions;
       print_line ~lvl_delta_pre:(-1) "end"
@@ -482,6 +478,36 @@ let codegen_sustained_actions printer (graphs : EventGraph.event_graph_collectio
     CodegenPrinter.print_line ~lvl_delta_pre:(-1) printer "end"
   )
 
+(* every assertion is one concurrent property, a module item:
+     label: assert property (rst_ni && <event bit> |-> S[[f]]);
+   the antecedent is the bit of the event the assertion is attached to *)
+let codegen_assert_properties printer (g : EventGraph.event_graph) =
+  let open EventGraph in
+  let wire td =
+    let w = Option.get td.w in
+    CodegenFormat.format_wirename w.thread_id w.id in
+  let rec sva = function
+    | Prop td -> wire td
+    | Next f -> Printf.sprintf "nexttime (%s)" (sva f)
+    | Always f -> Printf.sprintf "always (%s)" (sva f)
+    | Eventually f -> Printf.sprintf "s_eventually (%s)" (sva f)
+    | LNot f -> Printf.sprintf "not (%s)" (sva f)
+    | LAnd (f1, f2) -> Printf.sprintf "(%s) and (%s)" (sva f1) (sva f2)
+    | LOr (f1, f2) -> Printf.sprintf "(%s) or (%s)" (sva f1) (sva f2)
+  in
+  List.iter (fun (e : event) ->
+    if not e.removed then
+      List.iter (fun (a : action Lang.ast_node) ->
+        match a.d with
+        | Assertion (s, f) ->
+          Printf.sprintf "%s: assert property (rst_ni && %s |-> %s);"
+            (CodegenFormat.sanitize_identifier s)
+            (EventStateFormatter.format_current g.thread_id e.id)
+            (sva f) |> CodegenPrinter.print_line printer
+        | _ -> ()
+      ) e.actions
+  ) g.events
+
 let codegen_states printer
   (graphs : EventGraph.event_graph_collection)
   (pg : EventGraph.proc_graph)
@@ -492,6 +518,7 @@ let codegen_states printer
   ) else (
     codegen_decl printer g;
     codegen_next printer graphs pg g;
+    codegen_assert_properties printer g;
     codegen_sustained_actions printer graphs pg g;
     codegen_transition printer graphs g reset_by
   )
